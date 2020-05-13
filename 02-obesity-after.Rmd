@@ -1,0 +1,205 @@
+---
+title: "Reading and Merging Obesity Data"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE,message=FALSE)
+library(tidyverse)
+library(readxl)
+#library(zipcode)
+```
+
+### Data Files
+
+The Wisconsin obesity data is stored in two Excel workbooks,
+one for females and one for males.
+The data for each sex is split across five sheets based on age ranges.
+Each spread sheet has a row for each zip code
+and seven columns of data (three of which are derived) from counts in the other three.
+There is substantial missing data as counts are not reported if they are low by several criteria.
+
+### Read, Reformat, and Reshape Obesity Data
+
+#### For Loops and Functions
+
+To finish creating the data set in long format,
+we could copy/paste/edit the code from the previous lecture
+for all 10 sheets and then use `bind_rows()` to combine into a single data frame.
+A better way, however,
+is to write a function for the repeated elements of code.
+This results in code that is more concise,
+easier to read,
+easier to edit,
+and more clear.
+The cost is a bit of new syntax
+where we introduce the `for()` loop.
+
+The only parts of the previous code that vary when we read different sheets are:
+the file name, the number of the sheet, and the values for `sex` and `age`.
+The next function `read_and_format()` takes as arguments the name of the Excel file, a string which is one of "female" or "male",
+and an integer `i` from 1 to 5 which indicates which age range we are reading.
+For example, age range 1 is from 5--17 and is on sheet 3 for both the male and female workbooks.
+
+```{r read-obesity-data-function}
+## file is a string with filename
+## sex_string is either "female" or "male"
+## i is a number from 1 to 5
+read_and_format = function(file,sex_string,i)
+{
+  age_values = c("05-17","18-34","35-54","55-74","75-plus")
+  foo = read_excel(file, sheet=i+2, skip=5, na=".") %>%
+    select(starts_with("ZIP"),
+         starts_with("Number"),
+         starts_with("Population")) %>%
+    rename(zip = starts_with("ZIP"),
+           obese = ends_with("Obesity"),
+           bmi = ends_with("BMI"),
+           pop = starts_with("Population")) %>%
+    mutate(sex = sex_string) %>%
+    mutate(age = age_values[i])
+  return(foo)
+}
+```
+
+After defining this function,
+we write a second function
+which uses two nested for loops to read the data for all sexes and age ranges,
+combining the data sets as each new one is read in.
+The outer loop goes over the two sexes and the inner loop goes over the indices of the age ranges.
+The function creates an initial empty `tibble`.
+Each sheet is read into a temporary data frame which is then bound (using `bind_rows()`) to the initial one until the initial one has grown
+to be the complete data frame.
+Note that `bind_rows()` only works when the columns are compatible.
+
+```{r read-all-obesity-function}
+read_obesity = function()
+{
+  obesity = tibble()
+  sexes = c("female","male")
+  files = c("Obesity+Prevalence+by+ZIP+Code+and+Age+Group,+Females.xlsx",
+            "Obesity+Prevalence+by+ZIP+Code+and+Age+Group,+Males.xlsx")
+
+  for ( s in 1:2 ) ## seq_len(2) is the same as 1:2
+  {
+    for ( i in 1:5 ) ## seq_len(5) is the same as 1:5
+    {
+      temp = read_and_format(files[s],sexes[s],i)
+      obesity = bind_rows(obesity,temp)
+    }
+  }
+  
+  obesity = obesity %>%
+    mutate(zip = as.character(zip))
+  return( obesity )
+}
+```
+
+Now call the function and save the obesity data.
+
+```{r read-obesity}
+obesity = read_obesity()
+
+head(obesity)
+
+dim(obesity)
+```
+
+The long format data has advantages for many purposes.
+We can easily add new columns,
+such as prevalence of obesity
+among sampled patients for each zip/sex/age combination,
+or the total estimated number of such people in the population.
+We can filter to select certain characteristics (only males, only one age group).
+We can also aggregate (sum over zip codes, sexes, or whatever we want).
+
+### Rural/Urban Data
+
+```{r rural-urban}
+ru_orig = read_csv("wi_urban_rural.csv")
+ru = read_csv("wi_urban_rural.csv") %>%
+  select(Id2,`Urban:`,Rural) %>%
+  rename(zip = Id2,
+         urban = `Urban:`,
+         rural = Rural) %>%
+  mutate(population = rural + urban) %>%
+  mutate(p_urban = urban/population) %>%
+  mutate(zip = as.character(zip))
+```
+
+### Education Data
+
+```{r education}
+edu_orig = read_csv("wi_education.csv",na=c("(X)","-"))
+edu = edu_orig %>%
+  select(Id2,
+         contains("bachelor's degree or higher")) %>%
+  rename(zip = Id2,
+         pct_m_bach = `Percent Males; Estimate; Percent bachelor's degree or higher`,
+         pct_f_bach = `Percent Females; Estimate; Percent bachelor's degree or higher`) %>%
+  select(-contains("Percent")) %>%
+  mutate(zip = as.character(zip))
+```
+
+### Economic Data
+
+```{r income}
+income_orig = read_csv("wi_income.csv",na=c("-","(X)","**"))
+income = income_orig %>%
+  select(Id2,
+         `Number; Estimate; Households`,
+         `Median income (dollars); Estimate; Households`) %>%
+  rename(zip = Id2,
+         households = `Number; Estimate; Households`,
+         income = `Median income (dollars); Estimate; Households`) %>%
+  mutate(zip = as.charcter(zip))
+```
+
+### Save these modified data sets
+
+```{r write-for-homework, include=FALSE}
+write_csv(ru, "rural-urban.csv")
+write_csv(income, "income.csv")
+write_csv(edu, "education.csv")
+```
+
+### Join
+
+To join the obesity data set to the education, income, and rural/urban data sets, we will use the function `left_join()` from `dplyr`.
+This function is a *mutating join* function that combines data frames by adding new variables (like `mutate()` does).
+In a `left_join()`, the result will keep all of the data in the first (left) data frame and add all the new variables from the second data frame, matching values using the variable specified by the `by` argument.
+Typically, the same name is used as the matching variable in each data frame, but this can be modified with a different `by` argument.
+
+```{r join}
+## Note that obesity has 7740 rows
+## (one per zip code/sex/age interval) and the other data frames have
+## one row per zip code.
+## These columns are replicated as needed to match each row of obesity
+obesity = obesity %>%
+  left_join(edu, by="zip") %>%
+  left_join(income, by="zip") %>%
+  left_join(ru, by="zip")
+```
+
+Other mutating join functions are:
+
+- `inner_join()`
+    + keep only rows that match in each data frame
+- `left_join()`
+    + keep all rows from the first data frame
+- `right_join()`
+    + keep all rows from the second data frame
+- `full_join()`
+    + keep all rows from both data frames
+    
+### Write files
+
+After all of this work,
+it will be useful to save the long version of the data into a CSV file
+which we can read in directly in the future without the need to process all of the excel files.
+We have a short piece of code to reconstruct the wide version when we need it again.
+
+```{r save-data}
+write_csv(obesity,"obesity.csv")
+```

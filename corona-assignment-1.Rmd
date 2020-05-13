@@ -1,0 +1,244 @@
+---
+title: "Corona Activity 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+library(tidyverse)
+```
+
+### Data
+
+The file *china-blood-covid-19.csv* contains data from the research paper.
+Variables in the file are:
+
+- `city`: either Wuhan or Shenzhen;
+- `group`: one of Control, or the name of a hospital;
+- `diagnosis`: one of Normal (for Control) or COVID-19 (for the hospitals);
+- `blood`: the blood type, one of A, B, AB, or O;
+- `count`: the number of individuals in the group
+
+```{r read-data}
+cbc19 = china_blood_covid_19_1_
+```
+
+
+### Problems
+
+1. Using `tidyverse` tools, 
+create a 2 by 4 table for the controls with one row for each city, one column for each blood type, and values which are the percentage of individuals with each blood type within each city (so the rows sum to 100%).
+Round percentages to whole numbers.
+
+```{r problem-1}
+p_1 = cbc19%>%
+  select(city, blood, count, group)%>%
+  filter(group=="Control")%>%
+  group_by(city)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  group_by(city, blood)%>%
+  mutate(nBlood = sum(count),
+         pctBlood = round((nBlood/n)*100))%>%
+  ungroup()%>%
+  select(city, blood, pctBlood)%>%
+  group_by(city, blood)%>%
+  pivot_wider(names_from = blood, values_from = pctBlood)
+
+p_1
+
+```
+
+2. Repeat the previous problem, but fill the table with counts of individuals.
+Use the function `chisq.test()` to examine if the distribution of ABO blood types is the same among controls in each city.
+You can pipe the table of counts into this function.
+
+```{r problem-2}
+p_2 = cbc19%>%
+  select(city, blood, count, group)%>%
+  filter(group=="Control")%>%
+  group_by(city)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  group_by(city, blood)%>%
+  mutate(nBlood = sum(count))%>%
+  ungroup()%>%
+  select(city, blood, nBlood)%>%
+  group_by(city, blood)%>%
+  pivot_wider(names_from = blood, values_from = nBlood)%>%
+  ungroup()%>%
+  select(A,B,AB,O)
+  chisq.test(p_2)
+```
+
+3. Create a graph that effectively displays the differences in blood type percentages between the two control groups.
+
+```{r problem-3}
+p_3 = cbc19%>%
+  select(city, blood, count, group)%>%
+  filter(group=="Control")%>%
+  group_by(city)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  group_by(city, blood)%>%
+  mutate(nBlood = sum(count),
+         pctBlood = round((nBlood/n)*100))%>%
+  ungroup()%>%
+  select(city, blood, pctBlood)%>%
+  group_by(city, blood)
+graph1 = ggplot(p_3, mapping = aes(x=blood, y = pctBlood, color = city, fill = city))+geom_col(position = "dodge")+labs(x = "Blood Type", y = "Percentage")
+
+
+
+graph1
+```
+
+4. For each of the three hospitals, create 2 by 4 tables with the distribution of blood type as percentages for the corresponding control population and the COVID-19 patients. Are there similarities across the hospitals about which blood types have higher (or lower) relative frequencies than found in the general population?
+
+There seem to be more people with blood type A, at least in Wuhan, who get the COVID-19. 
+
+```{r problem-4}
+
+
+p_4_jin = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Jinyintan")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = pctBlood)
+
+p_4_ren = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Renmin")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = pctBlood)
+
+p_4_third = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Shenzhen", group == "Control" | group=="Third People's Hospital")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = pctBlood)
+
+p_4_jin
+p_4_ren
+p_4_third
+
+```
+
+5. For each of the three hospitals, create 2 by 4 tables of counts for controls and COVID-19 patients and conduct a chi-square test of independence.
+Which hospitals show evidence of a relationship between blood type and risk of COVID-19 infection?
+
+Jinyintan and Third People's Hospital both have extremely low Xi-Square values, which leads to us rejecting the null hypothesis that there is no relationship between blood type and COVID susceptability. Therefore, at Jinyintan and Third People's Hospital, there seems to be a relationship between blood type and risk.
+
+```{r problem-5}
+p_5_jin = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Jinyintan")%>%
+  select(blood, count, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = count)%>%
+  ungroup()%>%
+  select(A,B,AB,O)
+
+p_5_ren = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Renmin")%>%
+  select(blood, count, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = count)%>%
+  ungroup()%>%
+  select(A,B,AB,O)
+
+p_5_third = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Shenzhen", group == "Control" | group=="Third People's Hospital")%>%
+  select(blood, count, group)%>%
+  group_by(blood, group)%>%
+  pivot_wider(names_from = blood, values_from = count)%>%
+  ungroup()%>%
+  select(A,B,AB,O)
+
+chisq.test(p_5_jin)
+chisq.test(p_5_ren)
+chisq.test(p_5_third)
+
+
+```
+
+6. Create a graph that effectively displays the differences between distributions of blood type percentages in CORVID-19 patients and their controls.
+
+```{r problem-6}
+p_6_jin = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Jinyintan")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)
+
+graph_jin = ggplot(p_6_jin, mapping = aes(x=blood, y = pctBlood, color = group, fill = group))+geom_col(position = "dodge")+labs(x = "Blood Type", y = "Percentage")
+
+p_6_ren = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Wuhan", group == "Control" | group=="Renmin")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)
+
+graph_ren = ggplot(p_6_ren, mapping = aes(x=blood, y = pctBlood, color = group, fill = group))+geom_col(position = "dodge")+labs(x = "Blood Type", y = "Percentage")
+
+p_6_third = cbc19%>%
+  select(city, group, blood, count)%>%
+  filter(city == "Shenzhen", group == "Control" | group=="Third People's Hospital")%>%
+  group_by(group)%>%
+  mutate(n=sum(count))%>%
+  ungroup()%>%
+  select(group, blood, count, n)%>%
+  group_by(group, blood)%>%
+  mutate(pctBlood = round((count/n)*100))%>%
+  ungroup()%>%
+  select(blood, pctBlood, group)%>%
+  group_by(blood, group)
+
+graph_third = ggplot(p_6_third, mapping = aes(x=blood, y = pctBlood, color = group, fill = group))+geom_col(position = "dodge")+labs(x = "Blood Type", y = "Percentage")
+
+
+graph_jin
+graph_ren
+graph_third
+```
+
