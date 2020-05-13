@@ -1,0 +1,215 @@
+---
+title: "Corona Assignment 2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+library(tidyverse)
+library(lubridate)
+install.packages("maps")
+library(maps)
+install.packages("mapproj")
+library(mapproj)
+install.packages("gganimate")
+library(gganimate)
+install.packages("gifski")
+library(gifski)
+```
+
+### Data
+
+- Download recent versions of the COVID-19 confirmed cases
+    - from Johns Hopkins for the world
+    - from *The New York Times* for the US
+- Put the world data into long format
+- Join longitude/latitude data to the US data set
+
+```{r read-transform-data}
+global = time_series_covid19_confirmed_global%>%
+  pivot_longer(cols = 5:78, names_to = "Date", values_to = "Cases")
+
+covid19 = time_series_covid19_confirmed_global %>% 
+  mutate(`Country/Region` = case_when(
+    `Province/State` == "Grand Princess" ~ "Grand Princess",
+    `Province/State` == "Diamond Princess" ~ "Diamond Princess",
+    TRUE ~ `Country/Region`
+  )) %>% 
+  filter(`Province/State` != "Recovered" | is.na(`Province/State`))
+  
+
+temp1 = covid19 %>% 
+  select(`Country/Region`,starts_with("L"),`3/26/20`) %>% 
+  group_by(`Country/Region`) %>% 
+  summarize(Lat = sum(Lat*`3/26/20`) / sum(`3/26/20`),
+            Long = sum(Long*`3/26/20`) / sum(`3/26/20`))
+
+temp2 = covid19 %>% 
+  select(-`Province/State`,-starts_with("L")) %>% 
+  group_by(`Country/Region`) %>% 
+  summarize_all(sum)
+
+
+covid19_wide = inner_join(temp1,temp2) %>% 
+  ungroup()
+
+
+covid19_long = covid19_wide %>% 
+  pivot_longer(cols = contains("/20"), names_to = "Date", values_to = "Total") %>% 
+  mutate(Date = mdy(Date))
+rm(temp1,temp2)
+
+
+us_url = "https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv"
+us_covid19 = read_csv(us_url)
+
+data(state)
+
+state_centers = tibble(
+  state = state.name,
+  long = state.center$x,
+  lat = state.center$y) %>% 
+  bind_rows( tibble(
+    state = "District of Columbia",
+    long = -77.0369,
+    lat = 38.9072))
+
+us_covid19 = us_covid19 %>% 
+  left_join(state_centers)
+```
+
+
+### Problems
+
+1. Explain why some variable names have single back ticks around them, such as `3/26/20`.
+
+1. Variable names that contain characters that are invalid for variable names. A foreword slash is an invalid character for a variable name, and a variable name cannot start with a number. Therefore, they must be contained within back ticks in order to pass as valid variable names. 
+
+2. How does `inner_join()` differ from `left_join()`, `right_join()`, and `full_join()`. Would it have made a difference in this situation which function to use?
+
+2. inner_join merges data frames by matching values, keeping all columns from both frames. left_join returns rows from one data frame, as well as columns from both. right_join does the same, in regards to the other data frame. full_join returns all rows and columns, with NA where matching data are missing. In regards to state longitudes and latitudes, if we had not used left_join, we would have gotten a lot of bulk in our frame, or we would have accidentally given state_centers the data from us_covid19. We use inner_join to rejoin the temporary data frames in order to avoid having multiple rows that contain data that could be stored in one, and also to have lat&long in the same row as cases by date.
+
+3. Tabulate and graph the total number of confirmed cases in the world by date and graph this data.
+Describe the trend.
+
+3. The rate at which the diseased population grows seems to be exponential.
+```{r}
+p_3 = covid19_long%>%
+  select(`Country/Region`, Date, Total)%>%
+  group_by(Date)%>%
+  mutate(world_total = sum(Total))%>%
+  ungroup()%>%
+  select(Date, world_total)
+
+p_3
+
+ggplot(data = p_3, mapping = aes(x = Date, y = world_total)) + geom_line()
+
+
+```
+
+4. Make an animation of the US Map for total cases, similar to the world map animation.
+
+```{r}
+us_map = map_data("state")
+
+us_covid19 = us_covid19%>%
+  filter(is.na(long)==FALSE, state!='Alaska', state!='Hawaii')
+
+most_recent = us_covid19 %>% 
+  pull(date) %>% 
+  max()
+
+## Filter us_covid19 to eliminate Alaska and Hawaii for the plots
+## Use drop_na() to eliminate any data with no latitude or longitude
+
+
+p = ggplot() +
+  geom_polygon(data = us_map, aes(x=long,y=lat,group=group),
+               fill="white",color="black") +
+  geom_point(data = us_covid19,
+             aes(x=long,y=lat,size=cases), alpha = 0.5, color="red") +
+  scale_size_continuous(name="Cases", range=c(1,6)) +
+  coord_map("bonne", lat0 = 50) +
+  theme_void() + 
+  guides( color = guide_legend() ) +
+  labs( caption = "Data Repository provided by The New York Times.") +
+  theme(
+    legend.position = "bottom",
+    text = element_text(color = "#22211d"),
+    plot.background = element_rect(fill = "#ffffff", color = NA), 
+    panel.background = element_rect(fill = "#ffffff", color = NA), 
+    legend.background = element_rect(fill = "#ffffff", color = NA)
+  )
+p
+
+p2 = p + transition_time(date) +
+  labs(title = "Date: {frame_time}")
+
+nframes = us_covid19%>%
+  pull(date)%>%
+  unique()%>%
+  length()
+
+gifski(animate(p2, nframes = nframes, fps = 5))
+
+#I will submit the animation as well as this RMD
+```
+
+5. Add a new cases variable to the world data set (`group_by()` country, then `mutate` and use `diff()`) and make an animation of the world data showing new cases. This should show how hotspots are changing. Describe qualitatively what this animation shows about the COVID-19 global infection pattern over the past two months.
+
+```{r}
+p_5 = covid19_long%>%
+  group_by(`Country/Region`)%>%
+  mutate(new_cases = c(0,diff(Total)))
+
+
+world = map_data("world")
+
+mybreaks = c(1, 50, 100, 500, 1000, 5000, 10000, 50000, 100000)
+mylabels = c("1-49", "50-99", "100-499", "500-999",
+             "1,000-4,999", "5,000-9,999", "10,000-49,999",
+             "50,000-99,999","100,000+")
+
+g = ggplot() +
+  geom_path(data = world, aes(x=long, y = lat, group = group), alpha=0.5) +  
+  geom_point(data=filter(p_5, `Country/Region` != "Diamond Princess"),
+             aes(x=Long, y=Lat, size=new_cases, color=new_cases),
+             stroke=FALSE, alpha=0.25) +
+  scale_size_continuous(name="New Cases", trans="log", range=c(1,6),
+                        breaks=mybreaks, labels=mylabels) +
+#  scale_color_viridis_c(option="inferno", name="Cases", trans="log",
+#                        breaks=mybreaks, labels=mylabels) +
+  scale_color_viridis_c(option="viridis", name="New Cases", trans="log",
+                        breaks=mybreaks, labels=mylabels) +
+  theme_void() + 
+  guides( color = guide_legend() ) +
+  labs( caption = "Data Repository provided by Johns Hopkins CSSE.") +
+  theme(
+    legend.position = "bottom",
+    text = element_text(color = "#22211d"),
+    plot.background = element_rect(fill = "#ffffff", color = NA), 
+    panel.background = element_rect(fill = "#ffffff", color = NA), 
+    legend.background = element_rect(fill = "#ffffff", color = NA)
+  )
+
+g
+
+g2 = g + transition_time(Date) +
+  labs(title = "Date: {frame_time}")
+
+## count the number of dates to set nframes equal to that value
+## x %>% pull(Date) is like x$Data
+## unique() returns a vector of only the unique values
+## length() is the length of the vector; here the number of unique dates
+## we want one frame per date
+nframes = covid19_long %>% 
+  pull(Date) %>% 
+  unique() %>% 
+  length()
+
+## Show to frames per second (fps = 2)
+## This takes a couple minutes to render
+gifski(animate(g2, nframes = nframes, fps = 10), gif_file = "animate2.gif")
+```
+
