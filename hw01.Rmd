@@ -1,0 +1,121 @@
+---
+author: "YOUR NAME"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE)
+library(tidyverse)
+library(lubridate)
+```
+
+## Assignment 1
+
+#### Due Friday, February 21
+
+Turn in an HTML file and this R Markdown file after you have edited it.
+
+### Data
+
+The assignment uses both the original Madison weather data file,
+`madison-weather.csv`, and the official data `madison-weather-official.csv`.
+You may certainly copy and reuse code from lecture as needed.
+
+```{r read-data, include=FALSE}
+## Read the data files
+mw = read_csv("madison-weather.csv")
+official = read_csv("madison-weather-official.csv",
+              col_types = cols(
+                  name = col_character(),
+                  date = col_date(format = ""),
+                  prcp = col_double(),
+                  snow = col_double(),
+                  tmax = col_double(),
+                  tmin = col_double()))
+
+```
+
+### Problems
+
+### 1
+
+Use the full Madison weather data set.
+Create a smaller data set that has each day where both the Madison Weather Bureau and the Airport have both `tmax` and `tmin` measured without missing data. Keep the date, name of the weather station, and these two tempertures, but eliminate the other variables and  observations from the other two weather stations.
+What are the earliest and latest dates, how many observations are there, and how many dates are missing?
+
+```{r data-summaries}
+mw = mw %>% 
+    mutate(NAME = case_when(
+        NAME == "ARBORETUM UNIVERSITY WIS, WI US" ~ "Arboretum",
+        NAME == "CHARMANY FARM, WI US" ~ "Charmany",
+        NAME == "MADISON DANE CO REGIONAL AIRPORT, WI US" ~ "Airport",
+        NAME == "MADISON WEATHER BUREAU CITY, WI US" ~ "Bureau",
+        TRUE ~ NAME)) %>% 
+    select(-STATION,-ELEVATION,-starts_with("L")) %>% 
+    rename(name = NAME,
+           date = DATE,
+           prcp = PRCP,
+           snow = SNOW,
+           tmax = TMAX,
+           tmin = TMIN)
+
+#P1
+problem_1 = mw %>% 
+  select(name,date,tmax,tmin) %>% 
+  filter(name == "Airport" | name == "Bureau") %>% 
+  pivot_wider(names_from = name, values_from = c("tmax","tmin"))
+
+p1_mw_sum = problem_1 %>%
+    summarize(first = min(date),
+              last = max(date),
+              n = n(),
+              missing_dates = (last - first + 1) - n, 
+              na_tmax_a = sum(is.na(tmax_Airport)),
+              na_tmin_a = sum(is.na(tmin_Airport)),
+              na_tmax_b = sum(is.na(tmax_Bureau)),
+              na_tmin_b = sum(is.na(tmin_Bureau))
+              ) %>% 
+    arrange(first)
+
+p1_mw_sum %>% as.data.frame()
+
+#P2
+problem_2 = problem_1 %>%
+  select()%>%
+  mutate(problem_2, dif_max =
+           tmax_Airport-tmax_Bureau)
+
+```
+
+### 2
+
+Using the data set from the previous problem,
+calculate the difference (Airport minus Weather Bureau) of the maximum temperature recorded on each day and plot these differences with a histogram.
+Describe the notable features of this distribution.
+What are the mean and standard deviation?
+What are the median and lower and upper quartiles?
+What are the most extreme differences in each direction?
+
+### 3
+
+Repeat the previous problem with the daily minimum temperature.
+
+### 4
+
+Using the official Madison weather data,
+use code from class to create a data set with the dates and snowfall amounts from January 1, 1884 to the present
+where you replace missing snowfall totals with zero if the precipitation is zero and drop dates where the snowfall measurements are missing.
+Find the total annual snowfall by year and plot this.
+Add a trend line.
+Describe any patterns.
+How has total snowfall been changing in Madison?
+About how much does the actual snowfall in a given year tend to vary from the trend?
+
+### 5
+
+For each winter season from the 1885-86 winter through the 2018-2019 winter, find the earliest and latest snowfall occurences.
+Which winter has the record earliest snowfall and which has the record latest?
+
+### 6
+
+Find the record snowfall amount for each day of the year and plot this data. Which day in January or February has the lowest record snowfall?
