@@ -1,0 +1,409 @@
+---
+title: "Visualizing Coronavirus Cases"
+date: "3/30/2020"
+output: html_document
+fontsize: 12pt
+geometry: margin=0.75in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, cache = TRUE)
+library(tidyverse)
+library(lubridate) ## functions to work with dates
+library(maps)  ## data to draw map boundaries
+library(viridis)
+library(gganimate) ## code to animate ggplot2 graphs
+source("viridis.R")
+#library(wpp2019) ## package with population data
+```
+
+## Data
+
+We will use an up-to-date version of the file `time_series_covid19_confirmed_global.csv` from Johns Hopkins University at \url{https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series}.
+
+```{r data, include=FALSE}
+## include=FALSE means the code is executed,
+## but no code or output appears in the knitted document.
+## URL for the Johns Hopkins data
+
+hopkins_global_url = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+
+## get the COVID-19 data
+## Can read_csv() from URL for the most recent data
+covid19 = read_csv(hopkins_global_url)
+
+## this older version has 248 cases and 69 variables (dates through March 26, 2020).
+## covid19 = read_csv("time_series_covid19_confirmed_global.csv")
+## spec(covid19)
+
+## Recall the need to use single back ticks ` around invalid variable names
+
+## Eliminate the Grand Princess and Diamond Proncess cases from Canada
+## Eliminate "Recovered": rows
+covid19 = covid19 %>% 
+  mutate(`Country/Region` = case_when(
+    `Province/State` == "Grand Princess" ~ "Grand Princess",
+    `Province/State` == "Diamond Princess" ~ "Diamond Princess",
+    TRUE ~ `Country/Region`
+  )) %>% 
+  filter(`Province/State` != "Recovered" | is.na(`Province/State`))
+
+## Aggregate data from multiple rows in the same country to a single row
+## Take a weighted average of latitude and longitude by most recent cumulative cases
+## (Try to have Denmark not average its location with Greenland, for example)
+## Sum the cases for each date
+## Will split the data into two sets, do different summaries, and then rejoin  
+
+temp1 = covid19 %>% 
+  select(`Country/Region`,starts_with("L"),`3/29/20`) %>% 
+  group_by(`Country/Region`) %>% 
+  summarize(Lat = sum(Lat*`3/29/20`) / sum(`3/29/20`),
+            Long = sum(Long*`3/29/20`) / sum(`3/29/20`))
+
+temp2 = covid19 %>% 
+  select(-`Province/State`,-starts_with("L")) %>% 
+  group_by(`Country/Region`) %>% 
+  summarize_all(sum)
+
+## join to files back together
+covid19_wide = inner_join(temp1,temp2) %>% 
+  ungroup()
+
+## create long file with all cases in a single column
+## and date in a single column with proper formatting
+covid19_long = covid19_wide %>% 
+  pivot_longer(cols = contains("/20"), names_to = "Date", values_to = "Total") %>% 
+  mutate(Date = mdy(Date))
+
+## remove temporary objects
+rm(temp1,temp2)
+```
+
+## Remaining Tasks
+
+3. Plot data around the world
+4. Make an animated plot to show case numbers over time
+5. Examine trend lines for selected countries
+6. Calculate numbers of new cases for each day
+7. See how rates in the United States are affected since massive social distancing efforts began.
+8. Merge population data
+9. Examine graphs and trends of cases per one million people
+10. Other questions of interest
+
+## Make a static plot of the most recent cumulative counts
+
+I have included as comments in the code lot of details about the code to make this graph.
+There are multiple packages in R to work with map data.
+Here I show one way, using the package `maps`.
+There are other packages better for making maps closer to the kind that can be made with commercial GIS software,
+but for showing data without a need for high resolution, the `maps` package is adequate.
+
+```{r world-map-static}
+## get the world map
+## need library(maps) above
+world = map_data("world")
+
+### Code for static map modified from original by DataScience+
+### Animation needs library(gganimate)
+
+
+## Static plot saved as object p
+## geom_path() for the world map boundaries
+## Other novel features
+##   geom_point(), the aesthetic stroke represents the border line of the point
+##     stroke=TRUE is the default, here it is set false
+##     alpha is the transparency
+##     using both color and size to represent the number of cases
+##     setting the data to be only those where Total > 0 with filter()
+##     as we are plotting points with size and color on a log scale,
+##       this eliminates a lot of warning messages from taking log(0)
+##
+##   scale_size_continuous()
+##     change the default to break Total into categories by:
+##       the color scale uses the log of the values, not the values themselves
+##       otherwise all the smallish counts would be almost the same color
+##     range is the minimum and maximum size of the plotting characters used
+##     use hand-picked breaks and labels
+##
+##   scale_color_viridis_c()
+##     use the option="inferno" color scheme from viridis for continuous colors
+##     same breaks and labels as transformation as size
+##
+##   theme_void()
+##     remove all axes and gridlines and background color
+##
+##   guides() used to control the legends
+##     here only use a legend for color (size gets wrapped in too)
+##     more documentation at https://ggplot2.tidyverse.org/reference/guides.html
+##
+##   labs() controls all labels
+##     I usually use xlab(), ylab(), ggtitle() separately
+##     caption will appear at the bottom of the figure
+##
+##   theme() modifies general plot features
+##     put the legend on the bottom
+##     change the default color for all text
+##     use rectangles for all background fill colors, no color for boundary
+##
+##   colors are described by RGB format, each with a 2-digit hexadecimal code
+##     which ranges from 00 (zero) to FF (255). The digits in hexadecimal are:
+##     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, A (10), B (11), C (12), D (13), E (14), and F (15).
+##     The two digit number has a 16s place and a 1s place.
+##     So, FF means 15*16 + 15 = 255
+##     The color #ffffff has red, green, and blue on full blast each, which is white
+##     The color #000000 has all three primary light colors at zero, which is black
+##     Any color with red, green, and blue equal will be a shade of gray
+##     The color #22211d has red at level 34, green at 31, and blue at 29.
+##     These colors are all small and nearly the same,
+##       so a dark gray tending toward slightly toward gold. weird choice!
+##
+## Save the plot as an object named p
+## Later, it can be plotted or modified (like to add animation)
+## Notice that we are plotting 65 points (potentially) at each location, so later points
+##   will cover up the earlier points
+
+mybreaks = c(1, 50, 100, 500, 1000, 5000, 10000, 50000, 100000)
+mylabels = c("1-49", "50-99", "100-499", "500-999",
+             "1,000-4,999", "5,000-9,999", "10,000-49,999",
+             "50,000-99,999","100,000+")
+
+p = ggplot() +
+  geom_path(data = world, aes(x=long, y = lat, group = group), alpha=0.5) +  
+  geom_point(data=filter(covid19_long,Total>0 & `Country/Region` != "Diamond Princess"),
+             aes(x=Long, y=Lat, size=Total, color=Total),
+             stroke=FALSE, alpha=0.5) +
+  scale_size_continuous(name="Cases", trans="log", range=c(1,6),
+                        breaks=mybreaks, labels=mylabels) +
+#  scale_color_viridis_c(option="inferno", name="Cases", trans="log",
+#                        breaks=mybreaks, labels=mylabels) +
+  scale_color_viridis_c(option="viridis", name="Cases", trans="log",
+                        breaks=mybreaks, labels=mylabels) +
+  theme_void() + 
+  guides( color = guide_legend() ) +
+  labs( caption = "Data Repository provided by Johns Hopkins CSSE.") +
+  theme(
+    legend.position = "bottom",
+    text = element_text(color = "#22211d"),
+    plot.background = element_rect(fill = "#ffffff", color = NA), 
+    panel.background = element_rect(fill = "#ffffff", color = NA), 
+    legend.background = element_rect(fill = "#ffffff", color = NA)
+  )
+
+p
+```
+
+### Animation
+
+- The `gganimate` package has tools to make animations of data.
+- The documentation shows examples with scatter plots moving over time.
+- Here, we see how cumulative cases change over time.
+- There are only two steps to animate the graph we just made.
+    - Use the function `transition_time()` to set the variable which specifies what data is plotted when. We will use `Date`.
+    - Call `animate()` on the plot object.
+        - Set `nframes` to a value. The default is big (like 200), but we want one frame per day. A different number leads to weird flickering in the animation.
+        - Set `fps` to the desired frames per second. I found 3 to be too fast and 1 to be too slow, but experiment.
+    - Note that it does take a few minutes for the animation to be rendered. If you knit to an HTML file, then the animation lives in that file and you can just open it see it when you want.
+
+```{r world-animation}
+## make an animation with one map per Date
+p2 = p + transition_time(Date) +
+  labs(title = "Date: {frame_time}")
+
+## count the number of dates to set nframes equal to that value
+## x %>% pull(Date) is like x$Data
+## unique() returns a vector of only the unique values
+## length() is the length of the vector; here the number of unique dates
+## we want one frame per date
+nframes = covid19_long %>% 
+  pull(Date) %>% 
+  unique() %>% 
+  length()
+
+## Show to frames per second (fps = 2)
+## This takes a couple minutes to render
+animate(p2, nframes = nframes, fps = 2)
+```
+
+### US Data
+
+- On Saturday, March 27, *The New York Times* announced that they have a team of journalists working to keep cumulative COVID-19 confirmed case and death data at the state and county levels in the United states.
+- A link to the state-level data is below.
+- Reading the data from the URL means you can get the most recent data they have each time.
+- We will use this data for some visualizations in the US and you will use this as well for a homework assignment.
+- The function `diff()` takes differnces between adjacent values in a vector.
+    - If `x = c(1,3,5,10)`, the `diff(x) = c(2,2,5)`.
+    - The vector is one short, so when I use it in mutate, I add a 0 at the start.
+- Calling `diff()` on the cumulative case total will allow us to see how many new cases there are each day.
+- Is there evidence in some states that social distancing is having an effect on the infection rate? As:
+    - the median time from infection to symptoms is 5 days
+    - there is still very little testing in the US
+    - some people do not show symptoms for up to two weeks after infection
+- There could still increasing rates of infection in many states until things begin to turn around.
+
+#### Get the US COVID-19 Data
+
+```{r us-covid-19}
+us_url = "https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv"
+us_covid19 = read_csv(us_url)
+```
+
+#### Get the US Map Data
+
+```{r us-map}
+## Get the state boundary data (48 continental plus Washington DC)
+us_map = map_data("state")
+```
+
+#### Merge Data
+
+- We want to merge the COVID-19 data with the map data
+- However, the two data sets use different ways to reference states
+    - The COVID-19 data has:
+        - a column named `state` with capitalized state names
+        - a column named `fips` which is a two-digit code used for states
+    - The us_map data has:
+        - a column named `region` with lower-case state names
+- In addition, the us_map data does not have geographic centers        
+
+## Want to merge latitude/longitude with Covid-19 data
+
+- The built in R data set `state` has data on geogrphic centers and names
+- Merge these together, add Washington DC, and then merge with us_covid19
+
+```{r merge-data}
+## R data set `state` has geographic centers of the states
+data(state)
+
+state_centers = tibble(
+  state = state.name,
+  long = state.center$x,
+  lat = state.center$y) %>% 
+  bind_rows( tibble(
+    state = "District of Columbia",
+    long = -77.0369,
+    lat = 38.9072))
+
+## Merge
+us_covid19 = us_covid19 %>% 
+  left_join(state_centers)
+```
+
+## Plot the US
+
+```{r plot-most-recent-data}
+## get the most recent data
+most_recent = us_covid19 %>% 
+  pull(date) %>% 
+  max()
+
+## Filter us_covid19 to eliminate Alaska and Hawaii for the plots
+## Use drop_na() to eliminate any data with no latitude or longitude
+
+temp_covid19 = us_covid19 %>% 
+  filter(date == most_recent) %>% 
+  drop_na()
+
+ggplot() +
+  geom_polygon(data = us_map, aes(x=long,y=lat,group=group),
+               fill="white",color="black") +
+  geom_point(data = temp_covid19,
+             aes(x=long,y=lat,size=cases), alpha = 0.5, color="red") +
+  scale_size_continuous(name="Cases", range=c(1,6)) +
+  coord_map("bonne", lat0 = 50) +
+  theme_void() + 
+  guides( color = guide_legend() ) +
+  labs( caption = "Data Repository provided by The New York Times.") +
+  theme(
+    legend.position = "bottom",
+    text = element_text(color = "#22211d"),
+    plot.background = element_rect(fill = "#ffffff", color = NA), 
+    panel.background = element_rect(fill = "#ffffff", color = NA), 
+    legend.background = element_rect(fill = "#ffffff", color = NA)
+  )
+```  
+
+### Graphs of State Data for Selected States
+
+```{r states}
+## New York
+ny = us_covid19 %>% 
+  filter(state == "New York") %>% 
+  mutate(new_cases = c(0,diff(cases)))
+
+## Cumulative Cases
+ggplot(ny, aes(date, y = cases)) +
+  geom_line() +
+  geom_hline(yintercept = 0) +
+  xlab("Date") +
+  ylab("Cumulative Cases") +
+  ggtitle("New York Cumulative Confirmed Covid-19 Cases")
+
+ggplot(ny, aes(x=date, y=new_cases)) +
+  geom_col(fill="blue",color="black") +
+  geom_hline(yintercept=0) +
+  xlab("Date") +
+  ylab("New Cases") +
+  ggtitle("New York New Covid-19 Cases") +
+  theme_bw()
+
+
+wi = us_covid19 %>% 
+  filter(state == "Wisconsin") %>% 
+  mutate(new_cases = c(0,diff(cases)))
+
+ggplot(wi, aes(date, y = cases)) +
+  geom_line() +
+  geom_hline(yintercept = 0) +
+  xlab("Date") +
+  ylab("Cumulative Cases") +
+  ggtitle("Wisconsin Cumulative Confirmed Covid-19 Cases")
+
+ggplot(wi, aes(x=date, y=new_cases)) +
+  geom_col(fill="blue",color="black") +
+  geom_hline(yintercept=0) +
+  xlab("Date") +
+  ylab("New Cases") +
+  ggtitle("Wisconsin New Covid-19 Cases") +
+  theme_bw()
+
+```
+
+#### Functions
+
+```{r functions}
+one_state = function(x,state_name)
+{
+  temp = x %>% 
+  filter(state == state_name) %>% 
+  mutate(new_cases = c(0,diff(cases)))
+
+  p1 = ggplot(temp, aes(date, y = cases)) +
+    geom_line() +
+    geom_hline(yintercept = 0) +
+    xlab("Date") +
+    ylab("Cumulative Cases") +
+    ggtitle(paste(state_name,"Cumulative Confirmed Covid-19 Cases"))
+
+  p2 = ggplot(temp, aes(x=date, y=new_cases)) +
+    geom_col(fill="blue",color="black") +
+    geom_hline(yintercept=0) +
+    xlab("Date") +
+    ylab("New Cases") +
+    ggtitle(paste(state_name,"New Covid-19 Cases")) +
+    theme_bw()
+  
+  plot(p1)
+  plot(p2)
+}
+
+us_covid19 %>% 
+  one_state("Wisconsin")
+
+us_covid19 %>% 
+  one_state("Washington")
+```
+
+### Activities
+
+1. Make an animation of the US Map for total cases, similar to the world map animation
+2. Add a new cases variable to the world data set (`group_by()` country, then `mutate` and use `diff()`) and make an animation of the world data showing new cases. This should show how hotspots are changing.
